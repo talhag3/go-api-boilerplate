@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	AppPort string
+	AppEnv  string
 }
 
 func LoadConfig() (*Config, error) {
@@ -15,6 +16,7 @@ func LoadConfig() (*Config, error) {
 
 	return &Config{
 		AppPort: envOr("APP_PORT", "3000"),
+		AppEnv:  envOr("APP_ENVIRONMENT", "DEBUG"),
 	}, nil
 }
 
