@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log/slog"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/talhag3/go-api-boilerplate/internal/config"
 	"github.com/talhag3/go-api-boilerplate/internal/logger"
@@ -9,12 +11,14 @@ import (
 func main() {
 
 	conf, err := config.LoadConfig()
-
-	log := logger.New(conf.AppEnv)
-
 	if err != nil {
-		log.Error("Config Error", "error", err.Error())
+		panic("failed to load config: " + err.Error())
 	}
+
+	log := logger.New(conf)
+
+	// Override Go's default logger so third-party packages output structured logs instead of plain text.
+	slog.SetDefault(log)
 
 	app := fiber.New()
 
