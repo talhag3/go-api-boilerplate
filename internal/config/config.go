@@ -17,7 +17,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	DBSSLMode  string
-	DBMaxConns int
+	DBMaxConns int32
 	LogLevel   string // log level (debug, info, warn, error)
 }
 
@@ -39,7 +39,7 @@ func LoadConfig() (*Config, error) {
 		DBPassword: envOr("DB_PASSWORD", "postgres"),
 		DBName:     envOr("DB_NAME", "userapi"),
 		DBSSLMode:  envOr("DB_SSLMODE", "disable"),
-		DBMaxConns: int(maxConns),
+		DBMaxConns: int32(maxConns),
 		LogLevel:   envOr("LOG_LEVEL", "info"),
 	}, nil
 }
@@ -49,4 +49,13 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// Builds the postgres connection string used by pgx.
+// sample : postgres://postgres:postgres@localhost:5432/go_api_boilerplate?sslmode=disable
+func (c *Config) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName, c.DBSSLMode,
+	)
 }
