@@ -17,28 +17,28 @@ import (
 	"github.com/talhag3/go-api-boilerplate/internal/service"
 )
 
-// Server holds everything our app needs to run.
-// Keeping it in a struct like this makes it easy to start and stop the app cleanly.
+// Server holds all the components that our application needs to run.
+// Putting them in a struct makes it really clean to start/stop the server.
 type Server struct {
-	app  *fiber.App
-	cfg  *config.Config
-	log  *slog.Logger
-	pool *pgxpool.Pool
+	app  *fiber.App     // The Fiber app instance (web framework)
+	cfg  *config.Config // App configuration
+	log  *slog.Logger   // Structured logger
+	pool *pgxpool.Pool  // Postgres connection pool
 }
 
-// New sets up the Fiber app, wires up all the dependencies, and returns a Server.
-// This is the "composition root" - the one place where we connect the database,
-// repository, service, and handlers together.
+// New sets up our Fiber web application, wires all our layers together, and returns a Server.
+// This is where the magic happens - we connect database -> repository -> service -> handlers!
 func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool) *Server {
-	// 1. Create the Fiber app with custom timeouts and an error handler
+	// 1. Create the Fiber app. We set some custom timeouts so requests don't hang forever!
 	app := fiber.New(fiber.Config{
-		ReadTimeout:  10 * time.Second, // Max time to read the request body
-		WriteTimeout: 10 * time.Second, // Max time to write the response
-		IdleTimeout:  60 * time.Second, // Max time for an idle keep-alive connection
-		// Custom error handler so we always return JSON, even when Fiber throws an internal error
+		ReadTimeout:  10 * time.Second, // Max time to read the incoming request body
+		WriteTimeout: 10 * time.Second, // Max time to write the response back to the client
+		IdleTimeout:  60 * time.Second, // Keep-alive connection timeout
+		// Custom error handler so that Fiber returns structured JSON error pages
+		// instead of default plain HTML error pages when something goes wrong!
 		ErrorHandler: func(c fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
-			// If it's a Fiber error (like fiber.ErrNotFound), grab its status code
+			// If it's a Fiber-specific error (like 404 Route Not Found), get its code
 			if e, ok := err.(*fiber.Error); ok {
 				code = e.Code
 			}
@@ -52,24 +52,24 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool) *Server {
 		},
 	})
 
-	// 2. Register global middlewares (these run on EVERY request)
-	app.Use(requestid.New())         // Adds an X-Request-ID to every request for tracking
-	app.Use(middleware.Recover(log)) // Catches panics so the server doesn't crash
-	app.Use(middleware.Logger(log))  // Logs the request method, path, and latency
+	// 2. Register global middlewares that run on every single request.
+	app.Use(requestid.New())         // Adds a unique Request ID header to help track requests
+	app.Use(middleware.Recover(log)) // Catches code panics so the server doesn't crash
+	app.Use(middleware.Logger(log))  // Logs information about requests (method, status, latency)
 
-	// 3. Simple health check route for Kubernetes/Docker health probes
+	// 3. Simple health check route. Very useful for Docker/Kubernetes health checks!
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// 4. Wire up dependencies layer by layer
-	// The arrows show the flow: Repo depends on DB -> Service depends on Repo -> Handler depends on Service
+	// 4. Wire up all our project layers.
+	// Repo depends on DB pool -> Service depends on Repo -> Handler depends on Service.
 	userRepo := repository.NewUserRepository(pool)
 	userSvc := service.NewUserService(userRepo, log)
 	userHandler := handler.NewUserHandler(userSvc)
 
-	// 5. Set up the API routes
-	api := app.Group("/api/v1") // All routes will start with /api/v1
+	// 5. Register the user routes under the "/api/v1" prefix.
+	api := app.Group("/api/v1")
 	userHandler.Register(api)
 
 	return &Server{
@@ -80,25 +80,25 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool) *Server {
 	}
 }
 
-// Start tells Fiber to begin listening for HTTP requests on the configured port.
+// Start makes the Fiber app listen for HTTP requests on the port from our config.
 func (s *Server) Start() error {
 	addr := ":" + s.cfg.AppPort
 	s.log.Info("http server starting", "addr", addr)
-	// app.Listen is a blocking call - it will run until the server shuts down
+	// app.Listen is blocking, meaning the code pauses here while the server is running.
 	return s.app.Listen(addr)
 }
 
-// Shutdown gracefully stops the server.
-// It stops accepting new requests, waits for active requests to finish, then closes the DB.
+// Shutdown stops the server gracefully.
+// It stops accepting new requests, waits for active requests to finish, and closes the database connection.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.log.Info("http server shutting down")
 
-	// Tell Fiber to stop accepting new connections and wait for active ones to finish
+	// Shutdown the Fiber web server
 	if err := s.app.ShutdownWithContext(ctx); err != nil {
 		return fmt.Errorf("fiber shutdown failed: %w", err)
 	}
 
-	// Once the HTTP server is down, safely close the database connection pool
+	// Close the DB connection pool safely
 	s.pool.Close()
 
 	return nil

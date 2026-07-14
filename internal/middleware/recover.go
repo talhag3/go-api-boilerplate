@@ -7,36 +7,37 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-// Logger returns a Fiber middleware that logs every request.
-// We use slog so our access logs match the rest of our app's JSON format.
+// Logger returns a Fiber middleware that logs details of every HTTP request.
+// We use slog here too so these logs are structured just like the other logs.
+// NOTE: Yes, this Logger middleware is in the recover.go file. I got the filenames mixed up. I will fix it later!
 func Logger(log *slog.Logger) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		// Record the start time so we can calculate how long the request took
+		// Save the start time so we can see how long the request took to process!
 		start := time.Now()
 
-		// Call the next handler in the chain (our actual route logic)
+		// Call the next handler in the chain
 		err := c.Next()
 
-		// Build a list of key-value pairs for our structured log
-		// slog accepts a slice of 'any' for this, which is really flexible
+		// Build a slice of key-value pairs for structured logging.
+		// "any" is the new name for empty interface (interface{}), which is cool.
 		fields := []any{
-			"method", c.Method(),
-			"path", c.Path(),
-			"status", c.Response().StatusCode(),
-			"latency_ms", time.Since(start).Milliseconds(), // easier to read in JSON than seconds
-			"ip", c.IP(),
+			"method", c.Method(),                         // GET, POST, etc.
+			"path", c.Path(),                             // like /api/v1/users
+			"status", c.Response().StatusCode(),         // 200, 404, 500, etc.
+			"latency_ms", time.Since(start).Milliseconds(), // Calculate how long it took in milliseconds
+			"ip", c.IP(),                                 // Client's IP address
 		}
 
-		// If the route handler returned an error, log it as an Error level
+		// If there was an error in the handler, log it as an Error level
 		if err != nil {
 			fields = append(fields, "error", err.Error())
 			log.Error("request failed", fields...)
 		} else {
-			// Otherwise, just a normal Info level access log
+			// Otherwise, log it as a normal Info request
 			log.Info("request completed", fields...)
 		}
 
-		// We must return the error so Fiber's built-in error handler can still process it
+		// Important: we must return the error so Fiber's error handler can run!
 		return err
 	}
 }

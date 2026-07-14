@@ -13,11 +13,11 @@ import (
 	"github.com/talhag3/go-api-boilerplate/internal/repository"
 )
 
-// basic regex for email validation.
+// basic regex for email validation. I copied this regex pattern from Google!
 var emailRegex = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
-// UserService is the contract for our business logic.
-// The HTTP handler will depend on this, not the repository directly.
+// UserService is an interface that describes all the actions we can do with users.
+// The HTTP handler talks to this service, so we keep handler and repo decoupled.
 type UserService interface {
 	Create(ctx context.Context, in domain.CreateUserInput) (domain.User, error)
 	GetByID(ctx context.Context, id uuid.UUID) (domain.User, error)
@@ -26,12 +26,13 @@ type UserService interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
+// userService is the actual implementation of the interface above.
 type userService struct {
-	repo repository.UserRepository
-	log  *slog.Logger
+	repo repository.UserRepository // Needs the repository to store/retrieve data
+	log  *slog.Logger              // Needs a logger to log events
 }
 
-// NewUserService sets up the service with its dependencies.
+// NewUserService is the constructor function for our user service.
 func NewUserService(repo repository.UserRepository, log *slog.Logger) UserService {
 	return &userService{
 		repo: repo,
@@ -39,12 +40,13 @@ func NewUserService(repo repository.UserRepository, log *slog.Logger) UserServic
 	}
 }
 
+// Create handles validation and creation of a new user.
 func (s *userService) Create(ctx context.Context, in domain.CreateUserInput) (domain.User, error) {
-	// don't save empty strings
+	// Clean up whitespace and convert email to lowercase so searching is case-insensitive!
 	in.FullName = strings.TrimSpace(in.FullName)
 	in.Email = strings.TrimSpace(strings.ToLower(in.Email))
 
-	// simple validation before hitting the database
+	// Simple validation rules before we do a database call
 	if in.FullName == "" {
 		return domain.User{}, ErrInvalidInput("full_name is required")
 	}
@@ -52,9 +54,10 @@ func (s *userService) Create(ctx context.Context, in domain.CreateUserInput) (do
 		return domain.User{}, ErrInvalidInput("invalid email format")
 	}
 
+	// Call repository to save the user
 	user, err := s.repo.Create(ctx, in)
 	if err != nil {
-		// log the actual error for debugging, but pass the error up to the handler
+		// Log the error here so we can find it in our logs, then return it
 		s.log.Error("failed to create user in DB", "email", in.Email, "error", err)
 		return domain.User{}, err
 	}
@@ -63,8 +66,9 @@ func (s *userService) Create(ctx context.Context, in domain.CreateUserInput) (do
 	return user, nil
 }
 
+// GetByID retrieves a user by their UUID.
 func (s *userService) GetByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
-	// quick check to prevent hitting the DB with an empty UUID
+	// Don't waste time querying the DB if they sent an empty UUID
 	if id == uuid.Nil {
 		return domain.User{}, ErrInvalidInput("id is required")
 	}
@@ -72,24 +76,28 @@ func (s *userService) GetByID(ctx context.Context, id uuid.UUID) (domain.User, e
 	return s.repo.GetByID(ctx, id)
 }
 
+// List gets a paginated list of users.
 func (s *userService) List(ctx context.Context, page, pageSize int) ([]domain.User, error) {
-	// make sure we don't pass negative or zero values to the DB
+	// Make sure the page is at least 1, we can't have page 0 or negative pages!
 	if page < 1 {
 		page = 1
 	}
+	// Limit page size to maximum 100 so users can't crash the server by asking for 1,000,000 users!
 	if pageSize < 1 || pageSize > 100 {
-		// default to 20 if they ask for 0 or something crazy like 5000
-		pageSize = 20
+		pageSize = 20 // Default to 20
 	}
 
-	// calculate offset for pagination (page 1 -> offset 0, page 2 -> offset 20)
+	// Calculate the SQL OFFSET.
+	// Example: page 1, pageSize 20 -> offset = (1-1)*20 = 0.
+	// Example: page 2, pageSize 20 -> offset = (2-1)*20 = 20.
 	offset := int32((page - 1) * pageSize)
 
 	return s.repo.List(ctx, int32(pageSize), offset)
 }
 
+// Update validates updates and saves them.
 func (s *userService) Update(ctx context.Context, id uuid.UUID, in domain.UpdateUserInput) (domain.User, error) {
-	// because we use pointers for partial updates, we only validate if they actually sent the field
+	// Since fields are pointers, we check if they are not nil before validating them.
 	if in.FullName != nil {
 		*in.FullName = strings.TrimSpace(*in.FullName)
 		if *in.FullName == "" {
@@ -106,6 +114,7 @@ func (s *userService) Update(ctx context.Context, id uuid.UUID, in domain.Update
 	return s.repo.Update(ctx, id, in)
 }
 
+// Delete removes a user.
 func (s *userService) Delete(ctx context.Context, id uuid.UUID) error {
 	if id == uuid.Nil {
 		return ErrInvalidInput("id is required")
@@ -119,7 +128,8 @@ func (s *userService) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// custom error type so the handler knows to return a 400 Bad Request instead of a 500
+// ErrInvalidInput is a custom error type we use for validation errors.
+// This helps the HTTP handler know it was a 400 Bad Request instead of a 500 Server Error!
 type ErrInvalidInput string
 
 func (e ErrInvalidInput) Error() string {
